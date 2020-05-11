@@ -1,295 +1,392 @@
-.model tiny
+.MODEL small
+.STACK 100h
+.DATA
+    sum dw 0000
+    tempNum db 9 DUP(?)
+    result dw 2 DUP(?)
+    array dw 30 DUP(?)
+    size db 0
+    
+    negativeFlag db 0
+    dotFlag db 0
+    overflowFlag db 0
+    negativeOne equ -1 
+    max dw -32768
+    min dw 32767  
+    
+    errorSumOverflow db "Overflow!$"
+    errorOverflow db "Overflow. Enter number between -32768 and 32767!$"
+    errorNotANumber db "Not a number!$"
+    errorSize db "Size must be between 1 and 30!$"   
+    
+        
+    enterMessage db "Enter number: $"
+    sizeMessage db "Enter size: $"
+    
+    rangeMin dw -32768
+    rangeMax dw 32767
 
-.data
-tmp dw 0 
-countSymb dw 0 
-minus db 0
-result_minus db ' '
-znak db 2Dh
-end_of_str db 0
-msg1 db 'Enter amount: $'
-msg2 db 10,13,'Enter your ms: $',10,13 
-msg3 db 10,13,'AVERAGE is: $'
-Error1 db 10,13,'Only enter was pushed$'
-Error2 db 10,13, 'It is not a number$'
-over_flow db 10,13, 'Error: overflow$'
-ms db 200h dup ('$') 
-MAX db 200
-amount db 5 dup ('$')
-AVERAGE db 7 dup (' ')
-ostatok db 0
-prob db ' '
-.code
-print_str macro out_str
-    mov ah,09h
-    mov dx,offset out_str
+.CODE   
+
+PrintString macro string
+    push dx
+    push ax
+    lea dx, string
+    mov ah, 09H
     int 21h
-endm
-start:
-    mov ax, @data
-    mov ds, ax
-    
-    mov ah, 00h 
-    mov al, 2h
-    int 10h 
-    
-    print_str msg1 
-    mov ah, 0Ah 
-    lea dx, amount
-    int 21h   
-    cmp byte ptr amount+2, 0Dh
-    je error_input
-    print_str msg2
+    pop ax
+    pop dx
+    endm
 
-Input:  
-    mov ah,MAX
-    mov ms,ah
-    mov ah, 0Ah
-    lea dx, ms
-    int 21h 
-    cmp word ptr ms+2, 0Dh
-    je error_input
-     
-         
-    lea di,znak
-    lea SI,amount+2 
-    xor al,al
-get_Amount:     
-    mov cl,es:[si]
-    cmp cl, 30h                
-    jl err                    
-    cmp cl, 39h                 
-    jg err
-    sub cl,30h 
-    add al,cl
-    mov cl,amount+1
-    cmp cl,2
-    jne next
-    inc bl
+Newline macro
+    push dx
+    push ax
 
-    mov cl,0Ah
-    mul cl
-    dec amount+1
-    inc si
-    cmp amount+1,30h
-    jne get_Amount
-    mov cl,30h 
+    mov ah, 02h
+        
+    mov dl, 0Ah ; \n
+    int 21h
+    mov dl, 0Dh ; \r
+    int 21h
 
+    pop ax
+    pop dx
+    endm
 
-next: 
-    xor cx,cx   
-    xchg al,cl
-    mov countSymb,cx 
-    xor ax,ax
-    lea SI,ms+2    
-get_Average: 
-    
-get_num:
-    cmp end_of_str,1
-    je count    
-    cmp cl,00h
-    je count
-    CLD 
-    cmpsb 
-    je negative
+PrintResult proc
+    push si
+    push cx
+    push ax
+    push dx
+
+    lea si, result
+    xor cx, cx
+    mov cl, 2
+    m_printLoop:
+        call ToString
+        PrintString tempNum
+        cmp dotFlag, 1
+        je m_end
+        mov ah, 02h
+        mov dl, '.'
+        int 21h
+        m_end:
+        add si, 2
+        mov dotFlag, 1
+        loop m_printLoop
+    Newline
+    pop dx
+    pop ax
+    pop cx
+    pop si
+    ret
+    PrintResult endp
+
+PrintArray proc
+    push si
+    push cx
+    push ax
+    push dx
+
+    lea si, array
+    xor cx, cx
+    mov cl, size
+    printLoop:
+        call ToString
+        PrintString tempNum
+        mov ah, 02h
+        mov dl, ' '
+        int 21h
+        add si, 2
+    loop printLoop
+    Newline
+    pop dx
+    pop ax
+    pop cx
+    pop si
+    ret
+    PrintArray endp
+
+ReverseStr proc
+    push ax
+    push di
+    push si
+
+    xor di, di
+    mov ah, tempNum[di]
+    cmp ah, '-'
+    jne getSI
+    inc di
+    getSI:
+    mov si, di
+    siLoop:
+        cmp tempNum[si], '$'
+        je loopFin
+        inc si
+        jmp siLoop
+    loopFin:
     dec si
-    dec di 
-    cmp es:si,0Dh
-    je count
-    call get_count 
-    cmp es:si,20h
-    je next_num
 
-    sub es:si,30h
-    cmp minus, 1
-    je dop_kod
-
-next_num:
-    mov minus,0
-    inc si 
-    jmp get_Average    
-    
-count:
-    mov ax,tmp 
-    cmp ah,0f0h 
-    ja negative_res
-count_if_neg:    
-    mov cl,0Ah 
-    mul cx 
-    jo overflow
-    cmp ah,09h
-    jl is_checked 
-    js get_ah_normal_with_znak
-  
-
-is_checked:
-    mov cx,countSymb
-    cmp cl,1Eh
-    ja overflow    
-    div cx
-    mov cl,0Ah
-    cmp ax,00ffh
-    ja div_word
-    div cl
-    call to_float
-
-Output:
-    print_str msg3
-    print_str AVERAGE
-    
-    jmp Exit
-    
-negative:
-    mov minus,1 
-    dec di
-    jmp get_Average
-negative_res:
-    mov result_minus,'-'
-
-    not ax
-    inc ax
- 
-    jmp count_if_neg   
-            
-dop_kod:    
-    not ax
-    add ax,1 
-    dec bl 
-    jmp add_to_tmp
-                  
-get_count proc
-        push cx
-        mov bx,00h
-        push di
-        lea di,prob  
+    reverseLoop:
+        mov al, tempNum[si]
+        mov ah, tempNum[di]
+        mov tempNum[si], ah
+        mov tempNum[di], al
         inc di
-        count_loop:
-        cmp es:si,0Dh
-        je last_word
-        dec di
-        inc bl
-        cmpsb
-        jne count_loop
-    mLoop1:     
-        sub si,bx
-        dec bl
-        xor ax,ax
-        xor cx,cx
-        mov cl,bl
-        mov di,10       
-    mLoop2:
-        mul di                      
-        mov bl,[si]                 
-        cmp bl, '0'                
-        jl err                    
-        cmp bl, '9'                 
-        jg err                     
-        sub bl,30h                 
-        add ax,bx                   
-        inc si 
-        dec cl
-        cmp cl,0                      
-        ja mLoop2
-        pop di
-        pop cx 
-        dec cl
-        cmp minus, 1
-        je dop_kod
-add_to_tmp:
-        cmp minus,1
-        je add_checked_to_tmp
-        cmp ax,8000h
-        ja overflow
-add_checked_to_tmp:                                     
-        add tmp,ax 
-        mov minus,0
-        jmp next_num 
+        dec si
+        cmp di, si
+        jl reverseLoop
+    pop si
+    pop di
+    pop ax
+    ret
+    ReverseStr endp
 
-last_word:
-        mov end_of_str,1
-        sub si,bx
-        xor ax,ax
-        xor cx,cx
-        mov cl,bl
-        mov di,10 
-        jmp mLoop2   
-            
-to_float proc 
-    xor si,si
-    lea si,AVERAGE+3
-    cmp al,09h
-    mov bl,ah 
-    ;mov bl,dl
-    mov ostatok,bl
-    xor ah,ah
-    xor cx,cx
-    jl get_float
-    xor ah,ah
-    xor cx,cx
-    mov cl,0Ah
-    floatLoop:
-    div cl
-    mov bl,ah
-    mov [si],bl
-    add [si],30h
-    dec si
-    cmp al,09h
-    ja floatLoop
-    get_float:
+ToString proc ;SI points to number
+    push ax
+    push cx
+    push di
+    push dx
+
+    xor di, di
+    mov ax, [si]
+    cmp ax, -1
+    jg posit
+    mov tempNum[di], '-'
+    inc di
+    call ABS
+    posit:
+    mov cx, 10
+    toSLoop:
+        xor dx, dx
+        div cx
+        add dx, '0'
+        mov tempNum[di], dl
+        inc di
+    cmp ax, 0
+    jne toSLoop
+    mov tempNum[di], '$'
+
+    call ReverseStr
+
+    pop dx
+    pop di
+    pop cx
+    pop ax
+    ret
+    ToString endp
+
+ABS proc ;AX contains number     
+    push ax
+    and ax, 8000h ;if number is negative upper bit is 1
+                  ;== 1000 0000 0000 0000b
+    jz done  
+
+    pop ax
+    xor ax, negativeOne
+    inc ax
+    push ax   
     
-    mov [si],al
-    add [si],30h  
-    dec si
-    mov ah,result_minus
-    mov [si],ah
-    lea si,AVERAGE+3
-    mov [si]+1,','
-    mov ah,ostatok
-    mov [si]+2,ah
-    add [si]+2,30h
-    mov [si]+3,'$'
-    jmp Output
-endp  
+    done:  
+    pop ax   
+    ret
+    ABS endp
 
-error_input:
-    print_str Error1
-    jmp Exit
-err:
-    print_str Error2 
-    jmp Exit
-div_word:
-    div cx
-    xor si,si
-    lea si,AVERAGE+3
-    cmp al,09h 
-    mov bl,dl
-    mov ostatok,bl
-    xor ah,ah
-    xor cx,cx
-    jl get_float
-    xor ah,ah
-    xor cx,cx
-    mov cl,0Ah
-    floatLoop_word:
-    div cl
-    mov bl,ah
-    mov [si],bl
-    add [si],30h
-    dec si
-    xor ah,ah
-    cmp al,09h
-    ja floatLoop_word
-    jmp get_float
-     
-get_ah_normal_with_znak:
-    mov result_minus,'-'
-    not ax
-    inc ax    
-                   
-overflow:
+GetString proc
+    push si
+    mov si, dx
+    mov [si], 7
+
+    mov ah, 0Ah
+    int 21h 
+
+    xor ax, ax
+    inc si
+    LODSB
  
-    print_str over_flow               
-Exit:
-    mov ah, 4ch;
+    add si, ax
+    mov [si + 1], '$'
+   
+    pop si
+    ret
+    GetString endp
+
+ToInt proc
+    push di
+    push si
+    push bx
+
+    xor si, si
+    mov si, 2
+    cmp tempNum[si], '-'
+    jne positive
+    mov di, 1
+    inc si
+
+    positive:
+        cmp tempNum[si], '0'
+        jb notANumber
+        cmp tempNum[si], '9'
+        ja notANumber
+    
+    xor ax, ax
+    mov cx, 10
+    atoiLoop:
+        xor bx, bx
+        mov bl, tempNum[si]
+
+        cmp bl, '0'
+        jb parsed
+        cmp bl, '9'
+        ja parsed
+
+        sub bl, '0'
+        mul cx
+        cmp dl, 0
+        jg overflow
+        add ax, bx
+        
+        mov bx, ax
+        and bx, 8000h
+        jnz overflow  
+
+        inc si
+    jmp atoiLoop
+
+    overflow:
+        cmp di, 1
+        jne error
+        cmp ax, 8000h
+        je parsed
+        error:
+        PrintString errorOverflow     
+        Newline
+        jmp finish
+    notANumber:
+        PrintString errorNotANumber  
+        Newline
+        jmp finish
+
+    parsed:      
+        xor cx, cx
+        cmp di, 1
+        jne finish       
+        xor ax, negativeOne
+        inc ax
+    finish:
+    pop dx
+    pop si
+    pop di 
+    ret
+    ToInt endp  
+
+FindAverage proc
+    sub si, 2
+    mov ch, 0
+    mov cl, size
+
+    sumLoop:
+        mov dx, array[si]
+        mov ax, sum
+        add ax, dx
+        jo sumOverflow
+        mov sum, ax
+        sub si, 2
+    loop sumLoop
+    
+    mov dx, 0
+    mov ax, sum
+    cmp ax, -1
+    jnle notNegative
+    mov negativeFlag, 1
+    neg ax
+    notNegative: 
+    mov cl, size
+    mov ch, 0
+    div cx
+    cmp negativeFlag, 1
+    jne mNotNegative
+    neg ax
+    mNotNegative:
+    mov di, offset result
+    mov [di], ax
+    
+    mov ax, dx
+    mov dx, 0
+    mov cx, 100
+    mul cx
+    mov cl, size
+    mov ch, 0
+    div cx
+    
+    mov [di + 2], ax  
+    cmp overFlowFlag, 0
+    je endFindAvg
+    
+    sumOverflow:
+    mov overFlowFlag, 1 
+    PrintString errorSumOverflow
+    
+    endFindAvg:
+    ret        
+    FindAverage endp
+
+start:
+    mov ax, @DATA
+    mov ds, ax
+
+    sizeInput:
+    PrintString sizeMessage
+    lea dx, tempNum
+    call GetString
+    Newline
+
+    call ToInt
+    cmp cx, 0
+    jne sizeInput
+
+    cmp ax, 0
+    jle sizeError
+    cmp ax, 30
+    jg sizeError
+    jmp pos
+    sizeError:
+    PrintString errorSize
+    Newline
+    jmp sizeInput
+    
+    pos:
+    mov size, al
+
+    xor si, si  
+    xor cx, cx
+    mov cl, size
+    enterLoop:  
+        PrintString enterMessage   
+        lea dx, tempNum
+        call GetString  
+        Newline
+         
+        push cx
+        call ToInt          
+        cmp cx, 0  
+        pop cx
+        jne enterLoop
+
+        mov array[si], ax  
+        add si, 2 ;Add 2 because array is 2 byte
+        inc size
+        next:
+        dec size
+    loop enterLoop
+    
+    call FindAverage
+    cmp overFlowFlag, 1
+    jne printSuccess
+    mov ax, 4c00h
     int 21h
-end start 
+    printSuccess:
+    call PrintResult
+    mov ax, 4c00h
+    int 21h
+end start
