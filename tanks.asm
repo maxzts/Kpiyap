@@ -81,7 +81,7 @@ c_green equ 2h
 c_black equ 0
 c_cyan equ 3h
 c_red equ 4h
-c_wall equ 6eh		
+c_wall equ 001		
 c_e_bullet equ 9h		
 c_base equ 24h
 c_p_bullet equ c_red 
