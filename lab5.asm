@@ -1,543 +1,362 @@
+.286
 .model small
 .stack 100h
 
 .data
+    chunk_size equ 256
+    chunk db chunk_size dup('$')
+    chunk_last dw 0
 
-FILE_NAME_SIZE equ 127
+    wordb_size equ 50
+    wordb db wordb_size + 1 dup('$')
+    wordb_last dw 0
 
-file_name db FILE_NAME_SIZE dup(0)
-result_file_name db FILE_NAME_SIZE dup(0)
-                
-CMD_LINE_SIZE equ 128                
-command_line db CMD_LINE_SIZE dup(0)
+    fname db 256 dup(0)
+    number_buf db 256 dup(0)
 
-a_ASCII equ 61h
-POINT_ASCII equ 2Eh
-SLASH_ASCII equ 2Fh  
+    word_num dw 3
+    word_counter dw 0
 
-file_id dw 0
-result_file_id dw 0 
+    fdesc dw 0
+    read_pos dd 0
+    write_pos dd 0
 
-error_message1 db "Unable to open a file",13,10,'$'
-error_message2 db "Unable to create and open temp file",13,10,'$'
+    base dw 10
 
-error_message3 db "Unable to close a file",13,10,'$'
-error_message4 db "Unable to delete a file",13,10,'$'
-error_message5 db "Invalid input",13,10,'$'
-error_message6 db "Unable to rename a file",13,10,'$'
-error_message7 db "File name is too long",13,10,'$'
-
-SPACE equ 20h
-TAB equ 9h
-NEW_LINE equ 0Ah
-CARRIAGE_RETURN equ 0Dh
-
-MAX_BUFFER_SIZE equ 2048
-
-buffer db MAX_BUFFER_SIZE dup(0)
-
+    bad_file_msg db 'Cannot open file$'
+    bad_args_msg db 'Wrong arguments', 10, 13, 'Use: file.exe filename word_number$'
+    bad_num_msg  db 'Word number should [0, 32767]$'
+    done_msg     db 'Done!$'
+    endl         db 10, 13, '$'
 .code
 
-show_str MACRO
-    push ax
+main:
+    mov ax, @data
+    mov ds, ax
     
-    mov ah,9
-    int 21h
+    mov bl, es:[80h] ;args line length 
+    add bx, 80h      ;args line last    
+    mov si, 82h      ;args line start
+    mov di, offset fname
     
+    cmp si, bx
+    ja bad_arguments
+    
+    parse_path:
+    
+        cmp BYTE PTR es:[si], ' ' 
+        je parsed_path 
+              
+        mov al, es:[si]
+        mov [di], al      
+              
+        inc di
+        inc si
+    cmp si, bx
+    jbe parse_path
+    
+    parsed_path:  
+    mov di, offset number_buf  
+    inc si
+    cmp si, bx
+    ja bad_arguments  
+     
+    parse_number:
+     
+        cmp BYTE PTR es:[si], ' ' 
+        je parsed_number 
+              
+        mov al, es:[si]
+        mov [di], al      
+              
+        inc di
+        inc si
+    cmp si, bx
+    jbe parse_number
+    
+    parsed_number:
+    push 0
+    mov di, offset number_buf 
+    push di
+    mov di, offset word_num 
+    push di
+    call atoi
     pop ax    
-ENDM
+    pop ax 
+    pop ax;error
 
-open_file PROC
-    push cx dx
-    
-    mov ah,3Dh
-    mov al,02h
-    mov cl,0
-    int 21h
-    
-    jnc file_opened
-    
-    mov dx,offset error_message1
-    show_str
-    
-    file_opened:
-    
-    pop dx cx
-    ret
-open_file ENDP
+    cmp ax, 1
+    je bad_number
 
-create_and_open_file PROC
-    push dx
-    
-    mov ah,5Bh
-    mov cl,0
-    int 21h
-    
-    jnc file_created_and_opened
-    
-    mov dx,offset error_message2
-    show_str
-    
-    file_created_and_opened:
-    
-    pop dx
-    ret
-create_and_open_file ENDP    
+    cmp word_num, 0
+    jl bad_number
 
-read_line_from_file PROC
-    push ax bx cx dx
-    
-    mov bx,file_id
-    lea si,buffer
-    push si
-    mov cx,1
-    
-    read_character:
-    mov ah,3Fh
-    mov dx,si
-    int 21h
-    
-    cmp ax,0
-    jne read_something
-    jmp end_of_reading
-    read_something:
-    inc si
-    
-    cmp byte ptr [si-1],NEW_LINE
-    jne read_character
-    
-    end_of_reading:
-    
-    pop ax
-    sub si,ax
-    
-    pop dx cx bx ax
-    ret
-read_line_from_file ENDP
-    
-is_delimiter PROC
-    xor ah,ah
-    
-    cmp al,SPACE
-    jne not_space
-    mov ah,1
-    not_space:
-    
-    cmp al,TAB
-    jne not_tab
-    mov ah,1
-    not_tab:
-    
-    ret
-is_delimiter ENDP
+    call process_file
 
-find_word PROC
-    push bp
-    mov bp,sp
-    push ax cx si 
-    
-    mov si,[bp+4]
-    
-    handle_word:
-    
-    skip_delimiter:
-    mov al,[si]
-    call is_delimiter
-    
-    cmp ah,1
-    je found_delimiter
-    jmp stop_reading_string
-    found_delimiter:
-    
-    cmp cx,0
-    jne string_end_not_reached
-    jmp stop_reading_string
-    string_end_not_reached:
-    
-    inc si
-    dec cx
-    
-    jmp handle_word
-    stop_reading_string:
-    
-    mov bx,si
-    sub bx,[bp+4]
-    
-    skip_character:
-    
-    mov al,[si]
-    call is_delimiter
-    
-    cmp ah,1
-    jne not_delimiter
-    jmp word_read
-    not_delimiter:
-    
-    cmp cx,0
-    jne can_read_more
-    jmp word_read
-    can_read_more:
-    
-    cmp al,CARRIAGE_RETURN
-    jne not_the_end
-    jmp word_read
-    not_the_end:
-
-    inc si
-    dec cx
-    jmp skip_character
-    
-    word_read:
-    
-    mov di,si
-    sub di,[bp+4]
-    cmp bx,di
-    je word_not_found
-    dec dx
-    word_not_found:
-    
-    cmp cx,0
-    jne not_end_of_string
-    jmp out_of_loop
-    not_end_of_string:
-    
-    cmp dx,0
-    jne not_this_word
-    jmp out_of_loop
-    not_this_word:
-    
-    cmp byte ptr [si],CARRIAGE_RETURN
-    jne not_stop
-    jmp out_of_loop
-    not_stop:
-    
-    jmp handle_word
-    
-    out_of_loop:
-    
-    pop si cx ax bp
-    ret
-find_word ENDP
-
-delete_word PROC
-    push ax cx
-    
-    shift_character:
-    
-    mov al,buffer[di]
-    mov buffer[bx],al
-    
-    inc bx
-    inc di
-    dec cx
-    
-    cmp cx,0
-    jne shift_character
-    
-    pop cx ax
-    ret
-delete_word ENDP
-
-delete_words_in_file PROC
-    push bx cx dx si di
-    
-    handle_line:
-    call read_line_from_file
-
-    cmp si,0
-    jne read_line
-    jmp end_of_file_reached
-    read_line:
-    
-    mov cx,si
-    mov dx,ax
-    push offset buffer
-    call find_word
-    add sp,2
-    
-    cmp dx,0
-    jne no_word_to_delete
-    
-    sub cx,di
-    call delete_word
-    mov cx,bx
-    
-    no_word_to_delete:
-    
-    mov si,cx
-    mov buffer[si],'$'
-    call write_line_to_file
-
-    jmp handle_line
-    
-    end_of_file_reached:
-    
-    pop di si dx cx bx
-    ret
-delete_words_in_file ENDP
-
-write_line_to_file PROC
-    push ax bx
-    
-    mov ah,40h
-    mov bx,[result_file_id]
-    mov dx,offset buffer
-    int 21h
-    
-    pop bx ax
-    ret
-write_line_to_file ENDP
-
-read_command_line PROC
-    push cx si di
-    
-    xor cx,cx
-    mov cl,ds:[0080h]
-    mov bx,cx
-   
-    mov si,81h
-    lea di,command_line
-    
-    rep movsb
-    
-    pop di si cx
-    ret
-read_command_line ENDP
-
-is_digit PROC
-    xor ch,ch
-    
-    cmp cl,30h
-    jge greater_than_zero
-    jmp not_a_number
-    greater_than_zero:
-    
-    cmp cl,39h
-    jle less_than_nine
-    jmp not_a_number
-    less_than_nine:
-    
-    mov ch,1
-    not_a_number:
-    
-    ret
-is_digit ENDP    
-
-get_number_from_cmd_line PROC
-    push bx cx dx si
-    
-    mov dx,2
-    mov cx,bx
-    push offset command_line
-    call find_word
-    add sp,2
-    
-    cmp dx,0
-    jne invalid_input
-    
-    mov si,10
-    xor ax,ax
-    get_another_digit:
-    
-    mov cl,command_line[bx]
-    
-    cmp bx,di
-    jne not_end_of_number
-    jmp end_of_number
-    not_end_of_number:
-    
-    call is_digit
-    cmp ch,1
-    je digit_read
-    jmp invalid_input
-    digit_read:
-    
-    mul si
-    jno not_overflow
-    jmp invalid_input
-    not_overflow:
-    
-    xor ch,ch
-    sub cx,30h
-    add ax,cx
-    jno not_of
-    jmp invalid_input
-    not_of:
-    
-    inc bx
-    jmp get_another_digit
-    
-    end_of_number:
-    jmp proc_end 
-    
-    invalid_input:
-    xor ax,ax
-    
-    proc_end:
-    pop si dx cx bx
-    ret
-get_number_from_cmd_line ENDP
-
-get_file_name_from_cmd_line PROC
-    push cx bx dx si di
-    
-    xor ax,ax
-    mov dx,1
-    mov cx,bx
-    push offset command_line
-    call find_word
-    add sp,2
-    
-    cmp dx,0
-    jne file_name_not_found
-    
-    mov cx,di
-    sub cx,bx
-    mov ax,cx
-    
-    mov di,offset file_name
-    mov si,bx
-    add si,offset command_line
-    
-    rep movsb
-    
-    file_name_not_found:
-    pop di si dx bx cx
-    ret
-get_file_name_from_cmd_line ENDP
-
-set_temp_file_name PROC
-    push ax cx si di 
-    
-    mov si,offset file_name
-    mov di,offset result_file_name
-    
-    mov cx,ax
-    
-    rep movsb
-    
-    sub di,5
-    mov al,a_ASCII
-    change_file_name:
-    
-    cmp al,[di]
-    jne file_name_changed
-    inc al
-    jmp change_file_name
-    file_name_changed: 
-    
-    mov [di],al
-    
-    pop di si cx ax
-    ret
-set_temp_file_name ENDP    
-
-close_file PROC
+    mov ax, offset done_msg 
     push ax
-    
-    mov ah,3Eh
-    int 21h
-    
-    jnc file_closed
-    mov dx,offset error_message3
-    show_str
-    file_closed:
-    
+    call print_str  
     pop ax
-    ret
-close_file ENDP
 
-delete_file PROC
+    exit:
+    mov ax, 4C00h
+    int 21h
+
+    bad_file:
+    mov ax, offset bad_file_msg 
     push ax
-    
-    mov ah,41h
-    int 21h
-    
-    jnc file_deleted
-    mov dx,offset error_message4
-    show_str
-    file_deleted:
-    
+    call print_str  
     pop ax
+    jmp exit
+
+    bad_arguments:
+    mov ax, offset bad_args_msg 
+    push ax
+    call print_str  
+    pop ax
+    jmp exit
+
+    bad_number:
+    mov ax, offset bad_num_msg 
+    push ax
+    call print_str  
+    pop ax
+    jmp exit
+
+    process_file:
+
+        ;open target file
+        mov dx, offset fname
+        mov ah, 3Dh
+        mov al, 02h
+        int 21h
+        mov fdesc, ax
+
+        mov bx, ax
+        jnc read_file_chunk
+        jmp bad_file;error on open
+
+        read_file_chunk:  
+        mov ah, 42h
+        mov cx, WORD PTR [offset read_pos]
+        mov dx, WORD PTR [offset read_pos + 2]
+        mov al, 0  
+        mov bx, fdesc
+        int 21h
+        
+        mov cx, chunk_size
+        mov dx, offset chunk
+        mov ah, 3Fh
+        mov bx, fdesc
+        int 21h
+        jc close_file
+
+        cmp ax, 0
+        je close_file 
+        
+        mov cx, WORD PTR [offset read_pos]
+        mov dx, WORD PTR [offset read_pos + 2]
+        add dx, ax
+        adc cx, 0
+        mov WORD PTR [offset read_pos], cx
+        mov WORD PTR [offset read_pos + 2], dx
+
+        mov chunk_last, ax
+        call process_chunk
+
+        jmp read_file_chunk
+
+        close_file:
+        ;check word buffer
+        call check_word   
+
+        mov ah, 40h 
+        mov cx, 0
+        mov bx, fdesc
+        mov dx, offset wordb
+        int 21h   
+
+        mov ah, 3Eh
+        mov bx, fdesc
+        int 21h
     ret
-delete_file ENDP
 
-rename_file PROC
-    push ax dx di
+    process_chunk:
+        pusha
+        xor si, si
+
+        process_chunk_loop:
+
+            mov al, [chunk + si]
+            
+            mov di, wordb_last
+            mov [wordb + di], al
+            inc di
+            mov wordb_last, di
+
+            call check_separator
+            cmp bx, 1 
+            jne process_chunk_loop_inc 
+
+            call check_word
+            
+            cmp al, 13
+            jne process_chunk_loop_inc
+            mov word_counter, 0
+
+        process_chunk_loop_inc:
+        inc si
+        cmp si, chunk_last
+        jb process_chunk_loop
+
+        popa
+    ret 
     
-    mov ah,56h
-    mov dx,offset result_file_name
-    mov di,offset file_name
-    int 21h
-    
-    jnc file_renamed
-    mov dx,offset error_message6
-    show_str
-    file_renamed:
-    
-    pop di dx ax
+    check_separator:
+        ;al - char
+        mov bx, 1;separator flag
+        
+        cmp al, ' '
+        je check_separator_exit      
+        
+        cmp al, 13
+        je check_separator_exit  
+        
+        cmp al, 10
+        je check_separator_exit  
+                 
+        mov bx, 0         
+        
+        check_separator_exit:
     ret
-rename_file ENDP
 
-start:
+    check_word:
+        mov bx, wordb_last
+        dec bx
+        cmp bx, 0
+        jbe check_word_flush
 
-mov ax,@data
-mov es,ax
+        mov bx, word_counter
+        inc bx  
+        mov word_counter, bx
+        cmp bx, word_num 
+        jne check_word_flush     
+        mov di, wordb_last
+        dec di   
+        mov bl, [wordb + di] 
+        mov [wordb], bl 
+        mov wordb_last, 1
 
-call read_command_line
-mov ds,ax
+        check_word_flush:
+        call print    
+    ret
 
-call get_file_name_from_cmd_line
-cmp ax,0
-je invalid_parameter
-call set_temp_file_name
- 
-call get_number_from_cmd_line
-mov bx,ax
-cmp ax,0
-je invalid_parameter
+    print:       
+        ;print & clear wordb
+        pusha
 
-mov dx,offset file_name
-call open_file
-jc _end
+        mov ah, 42h
+        mov cx, WORD PTR [offset write_pos]
+        mov dx, WORD PTR [offset write_pos + 2]
+        mov al, 0  
+        mov bx, fdesc  
+        int 21h
+                     
+        mov ah, 40h 
+        mov cx, wordb_last
+        mov bx, fdesc
+        mov dx, offset wordb
+        int 21h 
+        
+        mov ax, wordb_last
+        mov cx, WORD PTR [offset write_pos]
+        mov dx, WORD PTR [offset write_pos + 2]
+        add dx, ax
+        adc cx, 0
+        mov WORD PTR [offset write_pos], cx
+        mov WORD PTR [offset write_pos + 2], dx 
+        
+        mov wordb_last, 0
 
-mov [file_id],ax
+        popa
+    ret
 
-mov dx,offset result_file_name
-call create_and_open_file
-jc _end
+    ;first - result code, second - string start, third - 16-bit number address
+    atoi:   
+        push bp
+        mov bp, sp   
+        pusha        
+        
+        ;[ss:bp+4+0] - number address  
+        ;[ss:bp+4+2] - string address 
+        ;[ss:bp+4+4] - error if 1
+        mov di, [ss:bp+4+2]  
+        
+        xor bx, bx     
+        xor ax, ax   
+        xor cx, cx
+        xor dx, dx
+        
+        cmp BYTE PTR [di + bx], '-'
+            jne atoi_loop
+        
+        inc cx; set negative after loop  
+        inc bx
+            
+        ;parse until error
+        atoi_loop:    
+            
+            cmp BYTE PTR [di + bx], '0'    
+            jb atoi_error 
+            cmp BYTE PTR [di + bx], '9'    
+            ja atoi_error
+                                
+            mul base 
+            mov dh, 0
+            mov dl, [di + bx] 
+            sub dl, '0'  
+            add ax, dx  
+            jo atoi_error      
+        
+        inc bx 
+        cmp BYTE PTR [di + bx], 0
+        jne atoi_loop  
+        
+        jmp atoi_result 
+        
+        atoi_error:
+            mov BYTE PTR [ss:bp+4+4], 1    
+            jmp atoi_end 
+        
+        atoi_result:
+            mov BYTE PTR [ss:bp+4+4], 0  
+            cmp cx, 1
+            jne atoi_end
+            neg ax
+        
+        atoi_end: 
+            mov di, [ss:bp+4+0]
+            mov [di], ax 
+        
+        popa
+        pop bp
+    ret 
 
-mov [result_file_id],ax
+    print_str:     
+        push bp
+        mov bp, sp   
+        pusha 
+        
+        mov dx, [ss:bp+4+0]     
+        mov ax, 0900h
+        int 21h 
+        
+        mov dx, offset endl
+        mov ax, 0900h
+        int 21h  
+        
+        popa
+        pop bp      
+    ret  
 
-mov ax,bx
-call delete_words_in_file
-
-mov bx,[result_file_id]
-call close_file
-jc _end
-
-mov bx,[file_id]
-call close_file
-jc _end
-
-mov dx,offset file_name
-call delete_file
-jc _end
-
-call rename_file
-
-_end:
-jmp skip_output_msg
-
-invalid_parameter:
-mov dx,offset error_message5
-show_str
-
-skip_output_msg:
-
-mov ax,4c00h
-int 21h
-
-end start
-
- 
+end main
